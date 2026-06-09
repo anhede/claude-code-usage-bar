@@ -86,6 +86,35 @@ def test_capsule_show_weekly_toggle():
     assert "7D" not in out_without
 
 
+def test_capsule_show_5h_toggle():
+    out_with = render("capsule", theme=get_theme("graphite"),
+                       use_color=False, show_5h=True, **SAMPLE)
+    out_without = render("capsule", theme=get_theme("graphite"),
+                          use_color=False, show_5h=False, **SAMPLE)
+    assert "5H" in out_with
+    assert "5H" not in out_without
+
+
+def test_hairline_show_5h_toggle():
+    out_with = render("hairline", theme=get_theme("graphite"),
+                       use_color=False, show_5h=True, **SAMPLE)
+    out_without = render("hairline", theme=get_theme("graphite"),
+                          use_color=False, show_5h=False, **SAMPLE)
+    assert "5h" in out_with
+    assert "5h" not in out_without
+
+
+def test_classic_show_5h_toggle():
+    out_with = render("classic", theme=get_theme("graphite"),
+                       use_color=False, show_5h=True, **SAMPLE)
+    out_without = render("classic", theme=get_theme("graphite"),
+                          use_color=False, show_5h=False, **SAMPLE)
+    plain_with    = _ANSI_RE.sub("", out_with)
+    plain_without = _ANSI_RE.sub("", out_without)
+    assert "5h" in plain_with
+    assert "5h" not in plain_without
+
+
 def test_density_pad_constants():
     assert DENSITY_PAD["compact"] == ""
     assert DENSITY_PAD["regular"] == " "

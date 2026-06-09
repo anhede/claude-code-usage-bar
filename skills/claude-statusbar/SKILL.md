@@ -35,6 +35,7 @@ give a short confirmation (one line, no lecture).
 | Toggle prompt-cache countdown | `cs config set show_cache_age true\|false` |
 | Toggle project + branch 2nd line | `cs config set show_project_branch true\|false` (default `true`) |
 | Hide weekly bar | `cs config set show_weekly false` |
+| Hide 5-hour bar (API users) | `cs config set show_5h false` |
 | Set warning threshold | `cs config set warning_threshold <0-100>` |
 | Set critical threshold | `cs config set critical_threshold <0-100>` |
 | Auto-collapse to hairline below width | `cs config set auto_compact_width <px>` |

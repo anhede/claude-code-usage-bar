@@ -35,6 +35,7 @@ class StatusbarConfig:
     density: str = DEFAULT_DENSITY
     auto_compact_width: int = DEFAULT_AUTO_COMPACT_WIDTH
     show_weekly: bool = True
+    show_5h: bool = True
     show_language: bool = True
     show_cost: bool = False
     show_cache_age: bool = True
@@ -101,6 +102,7 @@ def load_config(path: Optional[Path] = None) -> StatusbarConfig:
         density=str(raw.get("density", DEFAULT_DENSITY)),
         auto_compact_width=int(raw.get("auto_compact_width", DEFAULT_AUTO_COMPACT_WIDTH) or 0),
         show_weekly=_to_bool(raw.get("show_weekly", True)),
+        show_5h=_to_bool(raw.get("show_5h", True)),
         show_language=_to_bool(raw.get("show_language", True)),
         show_cost=_to_bool(raw.get("show_cost", False)),
         show_cache_age=_to_bool(raw.get("show_cache_age", True)),
@@ -136,7 +138,7 @@ def save_config(cfg: StatusbarConfig, path: Optional[Path] = None) -> None:
 
 VALID_KEYS = {
     "style", "theme", "density", "auto_compact_width",
-    "show_weekly", "show_language", "show_cost", "show_cache_age",
+    "show_weekly", "show_5h", "show_language", "show_cost", "show_cache_age",
     "show_project_branch",
     "show_todos", "show_tools", "show_tool_rollup", "show_agents",
     "show_duration", "show_lines", "show_ahead_behind", "show_version",
@@ -146,7 +148,7 @@ VALID_KEYS = {
     "warning_threshold", "critical_threshold",
     "color_ok", "color_warn", "color_hot",
 }
-_BOOL_KEYS = {"show_weekly", "show_language", "show_cost", "show_cache_age",
+_BOOL_KEYS = {"show_weekly", "show_5h", "show_language", "show_cost", "show_cache_age",
               "show_project_branch",
               "show_todos", "show_tools", "show_tool_rollup", "show_agents",
               "show_duration", "show_lines", "show_ahead_behind", "show_version",

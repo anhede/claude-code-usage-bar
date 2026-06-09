@@ -208,3 +208,16 @@ def test_cache_ttl_seconds_persists(tmp_path: Path):
     assert cfg_mod.load_config(p).cache_ttl_seconds == 3600
     cfg_mod.set_value("cache_ttl_seconds", "300", p)
     assert cfg_mod.load_config(p).cache_ttl_seconds == 300
+
+
+def test_show_5h_default_true(tmp_path: Path):
+    cfg = cfg_mod.load_config(tmp_path / "missing.json")
+    assert cfg.show_5h is True
+
+
+def test_show_5h_persists(tmp_path: Path):
+    p = tmp_path / "cfg.json"
+    cfg_mod.set_value("show_5h", "false", p)
+    assert cfg_mod.load_config(p).show_5h is False
+    cfg_mod.set_value("show_5h", "true", p)
+    assert cfg_mod.load_config(p).show_5h is True

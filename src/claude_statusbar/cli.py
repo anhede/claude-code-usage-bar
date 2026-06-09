@@ -27,6 +27,7 @@ def _run_config_subcommand(rest):
         print(f"density             = {cfg.density}")
         print(f"auto_compact_width  = {cfg.auto_compact_width or '(disabled)'}")
         print(f"show_weekly         = {cfg.show_weekly}")
+        print(f"show_5h             = {cfg.show_5h}")
         print(f"show_language       = {cfg.show_language}")
         print(f"show_cost           = {cfg.show_cost}")
         print(f"show_cache_age      = {cfg.show_cache_age}")

@@ -119,6 +119,7 @@ def render_capsule(
     warning_threshold=30.0, critical_threshold=70.0,
     density: str = "regular",
     show_weekly: bool = True,
+    show_5h: bool = True,
     ctx_pct: Optional[float] = None,
     **_ignored,
 ) -> str:
@@ -145,11 +146,12 @@ def render_capsule(
 
     parts = []
 
-    five_body = (
-        f"{BOLD}◷ 5H{RESET}{INK}{_bg(theme.pill_5h)} {pct_text(msgs_pct)} "
-        f"· {reset_5h}{sev_dot(msgs_pct)}{INK}{_bg(theme.pill_5h)}"
-    )
-    parts.append(pill(theme.pill_5h, five_body))
+    if show_5h:
+        five_body = (
+            f"{BOLD}◷ 5H{RESET}{INK}{_bg(theme.pill_5h)} {pct_text(msgs_pct)} "
+            f"· {reset_5h}{sev_dot(msgs_pct)}{INK}{_bg(theme.pill_5h)}"
+        )
+        parts.append(pill(theme.pill_5h, five_body))
 
     if show_weekly:
         week_body = (
@@ -191,6 +193,7 @@ def render_hairline(
     warning_threshold=30.0, critical_threshold=70.0,
     density: str = "regular",
     show_weekly: bool = True,
+    show_5h: bool = True,
     ctx_pct: Optional[float] = None,
     **_ignored,
 ) -> str:
@@ -219,10 +222,11 @@ def render_hairline(
     sep = f"{sep_pad}{EDGE}┊{RESET}{sep_pad}"
     parts = []
 
-    parts.append(
-        f"{MUTE}› 5h{RESET} {mini3(msgs_pct)} {INK}{pct_text(msgs_pct)}{RESET} "
-        f"{MUTE}↺ {reset_5h}{RESET}"
-    )
+    if show_5h:
+        parts.append(
+            f"{MUTE}› 5h{RESET} {mini3(msgs_pct)} {INK}{pct_text(msgs_pct)}{RESET} "
+            f"{MUTE}↺ {reset_5h}{RESET}"
+        )
     if show_weekly:
         parts.append(
             f"{MUTE}› 7d{RESET} {mini3(weekly_pct)} {INK}{pct_text(weekly_pct)}{RESET} "
@@ -264,6 +268,7 @@ def render_classic(
     use_color=True, theme: Optional[Theme]=None,
     warning_threshold=30.0, critical_threshold=70.0,
     countdown_emoji: str = "",
+    show_5h: bool = True,
     ctx_pct: Optional[float] = None,
     shimmer_phase=None,
     projection_5h: str = "",
@@ -291,6 +296,7 @@ def render_classic(
         cost_text=cost_text,
         theme=theme,
         shimmer_phase=shimmer_phase,
+        show_5h=show_5h,
         projection_5h=projection_5h,
         projection_7d=projection_7d,
         forecast_5h=forecast_5h,
