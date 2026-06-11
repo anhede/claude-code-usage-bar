@@ -9,6 +9,19 @@ For a quick overview of the latest release, see the
 
 ---
 
+## Unreleased
+
+### Added
+- **`show_5h` config toggle** (default `true`). API users who never see
+  rate-limit data for the 5-hour window can now hide that segment:
+  ```bash
+  cs config set show_5h false
+  ```
+  Works across all three styles (capsule, hairline, classic). Mirrors the
+  existing `show_weekly` flag.
+
+---
+
 ## v3.13.2 — 2026-06-09
 
 ### Changed
