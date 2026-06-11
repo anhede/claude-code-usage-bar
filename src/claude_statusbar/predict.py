@@ -60,6 +60,61 @@ DEBUG_PLACEHOLDER = "→--"   # "→--"
 # last-writer-wins concurrency, no write storm.
 _LATEST_PATH = Path(os.path.expanduser("~")) / ".cache" / "claude-statusbar" / "rate_latest.json"
 
+# Both shared stores hold ACCOUNT-level data, so they must be keyed by the
+# logged-in account: after `/login` to a different account the old account's
+# readings are still "plausible" (a 7d resets_at stays in-range for days) and
+# their later resets_at wins every monotonic merge — the bar would keep showing
+# the PREVIOUS account's 5h/7d for days (live incident 2026-06-11). The current
+# account uuid comes from oauthAccount.accountUuid in ~/.claude.json (~270KB;
+# a raw regex scan is ~0.6ms and is memoized on (mtime_ns, size), so renders
+# normally pay only a stat()). Unknown account (no file / API-key users) falls
+# back to the legacy unsuffixed paths — pre-switch behaviour, unchanged.
+_CLAUDE_JSON_PATH = Path(os.path.expanduser("~")) / ".claude.json"
+_ACCOUNT_CACHE: Dict[str, Any] = {"sig": None, "id": None}
+
+
+def _read_account_id() -> Optional[str]:
+    try:
+        st = _CLAUDE_JSON_PATH.stat()
+        sig = (st.st_mtime_ns, st.st_size)
+        if _ACCOUNT_CACHE["sig"] == sig:
+            return _ACCOUNT_CACHE["id"]
+        data = _CLAUDE_JSON_PATH.read_bytes()
+    except OSError:
+        return None
+    import re
+    # Anchor on the oauthAccount object so an unrelated future "accountUuid"
+    # key elsewhere in the file can't shadow the login identity.
+    anchor = data.find(b'"oauthAccount"')
+    m = re.search(rb'"accountUuid"\s*:\s*"([0-9a-fA-F-]{8,64})"',
+                  data[anchor:] if anchor >= 0 else data)
+    aid = m.group(1).decode("ascii") if m else None
+    _ACCOUNT_CACHE["sig"] = sig
+    _ACCOUNT_CACHE["id"] = aid
+    return aid
+
+
+def account_id() -> Optional[str]:
+    """Uuid of the currently logged-in Claude account, or None if undetectable."""
+    return _read_account_id()
+
+
+def _account_path(base: Path) -> Path:
+    """Per-account variant of a shared-store path (`rate_latest.<uuid12>.json`).
+    Unknown account → the legacy unsuffixed path."""
+    aid = account_id()
+    if not aid:
+        return base
+    return base.with_name(f"{base.stem}.{aid[:12]}{base.suffix}")
+
+
+def _latest_path() -> Path:
+    return _account_path(_LATEST_PATH)
+
+
+def _projection_path() -> Path:
+    return _account_path(_PROJECTION_PATH)
+
 MAX_PROJECTION_SAMPLES = 5000
 MAX_PROJECTION_SNAPSHOTS = 1000
 MAX_CLOSED_WINDOWS = 100
@@ -147,13 +202,30 @@ def _coerce(x):
 
 def _is_newer(cur_used, cur_reset, prev_used, prev_reset) -> bool:
     """Is (cur_used, cur_reset) a fresher account reading than (prev_used,
-    prev_reset)? Within a window used_pct only grows, and a new window has a
-    later resets_at — so 'newer' = later reset, or same reset with higher used."""
+    prev_reset)? Within a window used_pct normally only grows, and a new window
+    has a later resets_at — so 'newer' = later reset, or same reset with higher
+    used. Same-reset DOWNWARD revisions are handled separately in
+    reconcile_account via the observed_at grace clock (see DOWNGRADE_GRACE_S):
+    they're usually a stale session replay, but Anthropic does re-baseline
+    used_percentage down mid-window when account limits change."""
     if prev_used is None or prev_reset is None:
         return True
     if cur_reset > prev_reset:
         return True
     return cur_reset == prev_reset and cur_used > prev_used
+
+
+# How long a stored reading may go unconfirmed before a lower same-reset
+# reading is accepted as an official re-baseline (limits raised → same
+# resets_at, lower pct; observed live 2026-06-10: seven_day 19% → 3%, which
+# the pure monotonic merge would have pinned at 19% until window rollover —
+# days, for 7d). Any session still seeing the higher value re-confirms it
+# every render (~1 Hz via the daemon), so 120s of silence means no live
+# session believes the old number anymore.
+DOWNGRADE_GRACE_S = 120.0
+# Throttle for confirmation-only store writes (same value re-observed) so a
+# 1 Hz render loop doesn't rewrite the store every tick.
+CONFIRM_REFRESH_S = 15.0
 
 
 def _reset_plausible(window: str, reset, now: float) -> bool:
@@ -172,7 +244,7 @@ def reconcile_account(used_5h, resets_5h, used_7d, resets_7d, path=None, now=Non
     store and return the freshest (u5, r5, u7, r7). Makes every window converge
     to the same numbers within one render tick. Never raises — on any I/O error
     it just returns the inputs (degrades to per-session behaviour)."""
-    p = Path(path) if path is not None else _LATEST_PATH
+    p = Path(path) if path is not None else _latest_path()
     try:
         if now is None:
             import time as _t
@@ -186,20 +258,50 @@ def reconcile_account(used_5h, resets_5h, used_7d, resets_7d, path=None, now=Non
 
         out = {}
         changed = False
+        # Both windows come from the same API response headers, so one
+        # implausible resets_at dates the WHOLE blob: a five_hour reset in the
+        # past means these headers are hours old (a fresh response always has
+        # a future 5h reset), even though the seven_day reset may still look
+        # plausible. Idle-but-open Claude Code windows replay such frozen
+        # blobs every render — they must neither write the store nor count as
+        # confirmations (or a pre-rebaseline pct never heals).
+        blob_fresh = True
+        for win, reset in (("five_hour", resets_5h), ("seven_day", resets_7d)):
+            r = _coerce(reset)
+            if r is not None and not _reset_plausible(win, r, now):
+                blob_fresh = False
         for win, used, reset in (("five_hour", used_5h, resets_5h),
                                  ("seven_day", used_7d, resets_7d)):
             prev = store.get(win) if isinstance(store.get(win), dict) else {}
             pu, pr = _coerce(prev.get("used")), _coerce(prev.get("resets_at"))
+            po = _coerce(prev.get("observed_at"))
             cu, cr = _coerce(used), _coerce(reset)
-            cur_ok = cu is not None and _reset_plausible(win, cr, now)
+            cur_ok = cu is not None and blob_fresh and _reset_plausible(win, cr, now)
             prev_ok = pu is not None and _reset_plausible(win, pr, now)
-            if cur_ok and (not prev_ok or _is_newer(cu, cr, pu, pr)):
-                # store a plausible reading when it's newer, or when the stored
-                # one is missing/implausible (e.g. previously poisoned).
-                store[win] = {"used": cu, "resets_at": cr}
+            # Stored reading is "unconfirmed" when nothing has re-observed it
+            # within the grace period (legacy stores without observed_at count
+            # as unconfirmed, so a stuck pre-upgrade value heals immediately).
+            unconfirmed = po is None or (now - po) > DOWNGRADE_GRACE_S
+            rebaseline = (cur_ok and prev_ok and cr == pr and cu < pu
+                          and unconfirmed)
+            if cur_ok and (not prev_ok or _is_newer(cu, cr, pu, pr)
+                           or rebaseline):
+                # store a plausible reading when it's newer, when the stored
+                # one is missing/implausible (e.g. previously poisoned), or
+                # when an official downward re-baseline went unchallenged for
+                # the whole grace period.
+                store[win] = {"used": cu, "resets_at": cr, "observed_at": now}
                 out[win] = (cu, cr)
                 changed = True
             elif prev_ok:
+                if (cur_ok and cr == pr and cu == pu
+                        and (po is None or now - po > CONFIRM_REFRESH_S)):
+                    # Same reading re-observed: restart the grace clock so a
+                    # value any live session still agrees with can't be
+                    # downgraded by a stale replay.
+                    store[win] = {"used": pu, "resets_at": pr,
+                                  "observed_at": now}
+                    changed = True
                 out[win] = (pu, pr)
             else:
                 # neither stored nor current is trustworthy — pass input through
@@ -241,7 +343,7 @@ def empty_projection_store() -> Dict[str, Any]:
 
 
 def load_projection_store(path=None) -> Dict[str, Any]:
-    p = Path(path) if path is not None else _PROJECTION_PATH
+    p = Path(path) if path is not None else _projection_path()
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
@@ -266,7 +368,7 @@ def load_projection_store(path=None) -> Dict[str, Any]:
 
 
 def save_projection_store(store: Dict[str, Any], path=None) -> None:
-    p = Path(path) if path is not None else _PROJECTION_PATH
+    p = Path(path) if path is not None else _projection_path()
     from .cache import atomic_write_text
     atomic_write_text(p, json.dumps(store, separators=(",", ":")))
 
@@ -352,8 +454,23 @@ def record_projection_sample(store: Dict[str, Any], window: str, used_pct, reset
             return store
         if reset == latest_reset:
             max_used = max(float(s["used_pct"]) for s in valid_existing if float(s["resets_at"]) == reset)
-            if sample["used_pct"] <= max_used:
+            if sample["used_pct"] == max_used:
                 return store
+            if sample["used_pct"] < max_used:
+                # Inputs arrive reconciled (reconcile_account gates stale
+                # session replays since v3.13.3/4), so a converged reading
+                # below the same-reset max means the limit was re-baselined
+                # mid-window. Every stored sample for this window is in
+                # old-denominator units — incomparable — so drop them all
+                # (older resets included) and restart display smoothing,
+                # instead of refusing samples until the old max is exceeded
+                # (which froze the →NN% projection for the rest of the
+                # window).
+                series = []
+                store[window] = series
+                display = store.get("display")
+                if isinstance(display, dict):
+                    display.pop(window, None)
     if series and series[-1] == sample:
         return store
     series.append(sample)
@@ -589,8 +706,10 @@ def _format_projection_pct(value: float) -> str:
 def _projection_result_key(u5, r5, u7, r7) -> Optional[Tuple[str, str, float, float, float, float]]:
     try:
         return (
-            str(_PROJECTION_PATH),
-            str(_LATEST_PATH),
+            # account-suffixed paths, so an account switch (or a monkeypatched
+            # path in tests) invalidates the 1s result cache by key mismatch
+            str(_projection_path()),
+            str(_latest_path()),
             float(u5),
             float(r5),
             float(u7),

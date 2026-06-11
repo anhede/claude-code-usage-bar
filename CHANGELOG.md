@@ -21,6 +21,75 @@ For a quick overview of the latest release, see the
   existing `show_weekly` flag.
 
 ---
+  
+## v3.13.6 — 2026-06-11
+
+### Fixed
+- **Switching Claude accounts no longer keeps showing the previous account's
+  5h/7d usage.** The shared stores (`rate_latest.json`, `rate_projection.json`)
+  were account-global with no account key, so after `/login` to a different
+  account the old account's reading stayed "plausible" for days and its later
+  `resets_at` won every reconcile merge — the bar stayed pinned to the old
+  account's percentages (and its learned `→NN%` projections) until the old
+  window expired. Both stores are now keyed by the logged-in account
+  (`oauthAccount.accountUuid` from `~/.claude.json`, memoized on file
+  mtime/size — renders normally pay only a `stat()`): each account gets its own
+  `rate_latest.<uuid>.json` / `rate_projection.<uuid>.json`, switching back
+  restores that account's own data, and when the account can't be detected
+  (API-key/headless setups) the legacy unsuffixed paths keep working unchanged.
+
+---
+
+## v3.13.5 — 2026-06-10
+
+### Fixed
+- **The `→NN%` projection relearns after an official re-baseline instead of
+  freezing for the rest of the window.** The sample recorder refused any
+  same-window reading at or below the recorded max — meant to filter stale
+  session replays, but those are already gated upstream by the reconcile merge
+  (v3.13.3/v3.13.4). After Anthropic re-baselined the weekly limit (19% → 3%),
+  no new sample could be recorded until usage exceeded the old 19%, so the
+  projection kept showing a pre-rebaseline `→100%` for days. A converged
+  reading below the same-reset max now means the limit changed: all stored
+  samples for that window are in old-denominator units and incomparable, so
+  they're dropped, display smoothing restarts, and the projection relearns
+  from the window's bucket priors onward.
+
+---
+
+## v3.13.4 — 2026-06-10
+
+### Fixed
+- **Idle Claude Code windows can no longer pin the 5h/7d bars to hours-old
+  readings.** An open-but-idle window replays its last `rate_limits` blob on
+  every statusline render. If that blob's `five_hour` `resets_at` is already in
+  the past, the whole blob is hours old (a fresh API response always carries a
+  future 5h reset) — yet its `seven_day` value still looked plausible and kept
+  "re-confirming" the shared store, defeating v3.13.3's 120s re-baseline grace
+  (observed live: frozen sessions replaying 7d=15% blocked the official 3%
+  indefinitely). Blob freshness is now judged as a whole: a blob with any
+  implausible window reset neither overwrites the shared reading nor restarts
+  the grace clock.
+
+---
+
+## v3.13.3 — 2026-06-10
+
+### Fixed
+- **5h/7d bars no longer stick at a stale high % when Anthropic re-baselines
+  usage mid-window.** When account limits change (e.g. the weekly limit is
+  raised), the official `used_percentage` can drop within the same window —
+  observed live: `/usage` said 3% while the bar was pinned at 19% (and would
+  have stayed there until the weekly reset). The cross-session merge assumed
+  "within a window, used% only grows" absolutely; it now tracks when the stored
+  reading was last confirmed by any live session (`observed_at` in
+  `rate_latest.json`) and accepts an official downward revision once the old
+  value has gone unconfirmed for 120s. Stale idle-session replays still can't
+  drag the bar down — any session that still sees the higher value re-confirms
+  it every render and keeps the grace clock ticking. Pre-existing stores
+  without `observed_at` heal on the first render after upgrading.
+
+---
 
 ## v3.13.2 — 2026-06-09
 
